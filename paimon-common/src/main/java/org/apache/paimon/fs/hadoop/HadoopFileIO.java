@@ -18,6 +18,8 @@
 
 package org.apache.paimon.fs.hadoop;
 
+import org.apache.commons.lang.time.StopWatch;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.paimon.annotation.VisibleForTesting;
 import org.apache.paimon.catalog.CatalogContext;
 import org.apache.paimon.fs.FileIO;
@@ -41,6 +43,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,10 +52,59 @@ import java.util.concurrent.atomic.AtomicReference;
 public class HadoopFileIO implements FileIO {
 
     private static final long serialVersionUID = 1L;
+    // 耗时统计的阈值
+    private static long threshold = 1000;
+    private static final String rpcElapseThresholdKey = "dfs.rpc.elapse.threshold";
 
     protected SerializableConfiguration hadoopConf;
 
     protected transient volatile Map<Pair<String, String>, FileSystem> fsMap;
+
+    private static Map<String, String> fireHdfsConfMap = new HashMap<>();
+
+    static {
+        try {
+            Class<?> clazz = Class.forName("com.zto.fire.common.conf.FireHDFSConf");
+            Method method = clazz.getDeclaredMethod("getHdfsHAConf");
+            method.setAccessible(true);
+            Object obj = method.invoke(null);
+            if (obj != null) {
+                Map<String, String> confMap = (Map<String, String>) obj;
+                fireHdfsConfMap.putAll(confMap);
+
+                // 获取hdfs rpc耗时统计阈值
+                if (fireHdfsConfMap.containsKey(rpcElapseThresholdKey)) {
+                    threshold = Long.parseLong(fireHdfsConfMap.get(rpcElapseThresholdKey));
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("未加载到fire框架中hdfs HA相关配置信息");
+        }
+    }
+
+    /**
+     * 代码耗时统计
+     * @param action
+     * 操作名称
+     * @param sw
+     * 计时器
+     */
+    private static void elapse(String action, StopWatch sw) {
+        long elapse = sw.getTime();
+        if (elapse >= threshold) {
+            LOG.warn("HDFS RPC请求[{}]耗时: {}ms", action, elapse);
+        }
+        sw.stop();
+    }
+
+    /**
+     * 获取StopWatch并开始
+     */
+    private static StopWatch getStopWatchAndStart() {
+        StopWatch sw = new StopWatch();
+        sw.start();
+        return sw;
+    }
 
     @VisibleForTesting
     public void setFileSystem(Path path, FileSystem fs) throws IOException {
@@ -67,7 +119,13 @@ public class HadoopFileIO implements FileIO {
 
     @Override
     public void configure(CatalogContext context) {
-        this.hadoopConf = new SerializableConfiguration(context.hadoopConf());
+        Configuration cfg = context.hadoopConf();
+        if (!fireHdfsConfMap.isEmpty()) {
+            for (Map.Entry<String, String> entry : fireHdfsConfMap.entrySet()) {
+                cfg.set(entry.getKey(), entry.getValue());
+            }
+        }
+        hadoopConf = new SerializableConfiguration(cfg);
     }
 
     @Override
@@ -85,12 +143,16 @@ public class HadoopFileIO implements FileIO {
 
     @Override
     public FileStatus getFileStatus(Path path) throws IOException {
+        StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
-        return new HadoopFileStatus(getFileSystem(hadoopPath).getFileStatus(hadoopPath));
+        FileStatus fs = new HadoopFileStatus(getFileSystem(hadoopPath).getFileStatus(hadoopPath));
+        elapse("getFileStatus", sw);
+        return fs;
     }
 
     @Override
     public FileStatus[] listStatus(Path path) throws IOException {
+        StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
         FileStatus[] statuses = new FileStatus[0];
         org.apache.hadoop.fs.FileStatus[] hadoopStatuses =
@@ -101,32 +163,45 @@ public class HadoopFileIO implements FileIO {
                 statuses[i] = new HadoopFileStatus(hadoopStatuses[i]);
             }
         }
+        elapse("listStatus", sw);
         return statuses;
     }
 
     @Override
     public boolean exists(Path path) throws IOException {
+        StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
-        return getFileSystem(hadoopPath).exists(hadoopPath);
+        boolean isExist = getFileSystem(hadoopPath).exists(hadoopPath);
+        elapse("exists", sw);
+        return isExist;
     }
 
     @Override
     public boolean delete(Path path, boolean recursive) throws IOException {
+        StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
-        return getFileSystem(hadoopPath).delete(hadoopPath, recursive);
+        boolean isDelete = getFileSystem(hadoopPath).delete(hadoopPath, recursive);
+        elapse("delete", sw);
+        return isDelete;
     }
 
     @Override
     public boolean mkdirs(Path path) throws IOException {
+        StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
-        return getFileSystem(hadoopPath).mkdirs(hadoopPath);
+        boolean isMkdir = getFileSystem(hadoopPath).mkdirs(hadoopPath);
+        elapse("mkdir", sw);
+        return isMkdir;
     }
 
     @Override
     public boolean rename(Path src, Path dst) throws IOException {
+        StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopSrc = path(src);
         org.apache.hadoop.fs.Path hadoopDst = path(dst);
-        return getFileSystem(hadoopSrc).rename(hadoopSrc, hadoopDst);
+        boolean isRename = getFileSystem(hadoopSrc).rename(hadoopSrc, hadoopDst);
+        elapse("rename", sw);
+        return isRename;
     }
 
     @Override

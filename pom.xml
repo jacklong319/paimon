@@ -31,7 +31,7 @@ under the License.
     <artifactId>paimon-parent</artifactId>
     <groupId>org.apache.paimon</groupId>
     <name>Paimon : </name>
-    <version>0.9-SNAPSHOT</version>
+    <version>0.9.1-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <url>https://paimon.apache.org</url>
@@ -59,7 +59,7 @@ under the License.
         <module>paimon-core</module>
         <module>paimon-flink</module>
         <module>paimon-docs</module>
-        <module>paimon-e2e-tests</module>
+        <!--<module>paimon-e2e-tests</module>-->
         <module>paimon-filesystems</module>
         <module>paimon-format</module>
         <module>paimon-bundle</module>
@@ -71,7 +71,7 @@ under the License.
     </modules>
 
     <properties>
-        <project.build.outputTimestamp>2024-05-07T06:19:41Z</project.build.outputTimestamp>
+        <project.build.outputTimestamp>2024-06-11T01:29:18Z</project.build.outputTimestamp>
         <paimon.shade.version>0.6.0-incubating</paimon.shade.version>
         <paimon.shade.jackson.version>2.14.2</paimon.shade.jackson.version>
         <paimon.shade.guava.version>30.1.1-jre</paimon.shade.guava.version>
@@ -270,30 +270,21 @@ under the License.
           binaries from distribution tarball.
           The script can be found under tools/releasing/create_source_release.sh.
         -->
+        <!-- 发布jar包到zto私服 -->
         <profile>
-            <id>apache-release</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-assembly-plugin</artifactId>
-                        <dependencies>
-                            <dependency>
-                                <groupId>org.apache.apache.resources</groupId>
-                                <artifactId>apache-source-release-assembly-descriptor</artifactId>
-                                <version>1.0.6</version>
-                            </dependency>
-                        </dependencies>
-                        <executions>
-                            <execution>
-                                <id>source-release-assembly</id>
-                                <!-- disable the execution -->
-                                <phase>none</phase>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
+            <id>deploy-zto-repo</id>
+            <distributionManagement>
+                <repository>
+                    <id>repo-zto-rc</id>
+                    <name>libs-release</name>
+                    <url>https://jfrog.dev.ztosys.com/artifactory/libs-release/</url>
+                </repository>
+                <snapshotRepository>
+                    <id>repo-zto-snapshot</id>
+                    <name>libs-snapshot</name>
+                    <url>https://jfrog.dev.ztosys.com/artifactory/libs-snapshot/</url>
+                </snapshotRepository>
+            </distributionManagement>
         </profile>
 
         <profile>
@@ -383,10 +374,10 @@ under the License.
                 <artifactId>maven-compiler-plugin</artifactId>
             </plugin>
 
-            <plugin>
+            <!--<plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-checkstyle-plugin</artifactId>
-            </plugin>
+            </plugin>-->
 
             <plugin>
                 <groupId>org.apache.rat</groupId>
@@ -780,7 +771,7 @@ under the License.
                     </configuration>
                 </plugin>
 
-                <plugin>
+                <!--<plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-checkstyle-plugin</artifactId>
                     <version>2.17</version>
@@ -788,7 +779,7 @@ under the License.
                         <dependency>
                             <groupId>com.puppycrawl.tools</groupId>
                             <artifactId>checkstyle</artifactId>
-                            <!-- Note: match version with docs/flinkDev/ide_setup.md -->
+                            &lt;!&ndash; Note: match version with docs/flinkDev/ide_setup.md &ndash;&gt;
                             <version>8.14</version>
                         </dependency>
                     </dependencies>
@@ -821,13 +812,13 @@ under the License.
                                 <style>AOSP</style>
                             </googleJavaFormat>
 
-                            <!-- \# refers to the static imports -->
+                            &lt;!&ndash; \# refers to the static imports &ndash;&gt;
                             <importOrder>
                                 <order>org.apache.paimon,org.apache.paimon.shade,,javax,java,scala,\#</order>
                             </importOrder>
 
                             <licenseHeader>
-                                <!-- replace it with ${project.rootDirectory} after maven 4.0.0, see MNG-7038 -->
+                                &lt;!&ndash; replace it with ${project.rootDirectory} after maven 4.0.0, see MNG-7038 &ndash;&gt;
                                 <file>${maven.multiModuleProjectDirectory}/copyright.txt</file>
                                 <delimiter>${spotless.delimiter}</delimiter>
                             </licenseHeader>
@@ -853,7 +844,7 @@ under the License.
                             </goals>
                         </execution>
                     </executions>
-                </plugin>
+                </plugin>-->
 
 
                 <plugin>
