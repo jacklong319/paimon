@@ -29,6 +29,8 @@ import org.apache.flink.api.connector.source.Boundedness;
 import org.apache.flink.api.connector.source.SplitEnumerator;
 import org.apache.flink.api.connector.source.SplitEnumeratorContext;
 import org.apache.flink.metrics.groups.SplitEnumeratorMetricGroup;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
@@ -40,6 +42,7 @@ import java.util.Map;
 public class ContinuousFileStoreSource extends FlinkSource {
 
     private static final long serialVersionUID = 4L;
+    private static final Logger LOG = LoggerFactory.getLogger(ContinuousFileStoreSource.class);
 
     protected final Map<String, String> options;
     protected final BucketMode bucketMode;
@@ -75,6 +78,9 @@ public class ContinuousFileStoreSource extends FlinkSource {
             nextSnapshotId = checkpoint.currentSnapshotId();
             splits = checkpoint.splits();
         }
+        LOG.info("当前snapshotId: {}", nextSnapshotId);
+        splits.forEach(split -> LOG.info("Split: {}", split));
+
         StreamTableScan scan = readBuilder.newStreamScan();
         if (metricGroup(context) != null) {
             ((StreamDataTableScan) scan)

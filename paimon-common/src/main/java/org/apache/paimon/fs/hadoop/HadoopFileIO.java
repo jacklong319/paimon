@@ -89,10 +89,10 @@ public class HadoopFileIO implements FileIO {
      * @param sw
      * 计时器
      */
-    private static void elapse(String action, StopWatch sw) {
+    private static void elapse(String action, Path path, StopWatch sw) {
         long elapse = sw.getTime();
         if (elapse >= threshold) {
-            LOG.warn("HDFS RPC请求[{}]耗时: {}ms", action, elapse);
+            LOG.warn("HDFS RPC请求[{}->{}]耗时: {}ms", action, path.toString(), elapse);
         }
         sw.stop();
     }
@@ -146,7 +146,7 @@ public class HadoopFileIO implements FileIO {
         StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
         FileStatus fs = new HadoopFileStatus(getFileSystem(hadoopPath).getFileStatus(hadoopPath));
-        elapse("getFileStatus", sw);
+        elapse("getFileStatus", path, sw);
         return fs;
     }
 
@@ -163,7 +163,7 @@ public class HadoopFileIO implements FileIO {
                 statuses[i] = new HadoopFileStatus(hadoopStatuses[i]);
             }
         }
-        elapse("listStatus", sw);
+        elapse("listStatus", path, sw);
         return statuses;
     }
 
@@ -172,7 +172,7 @@ public class HadoopFileIO implements FileIO {
         StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
         boolean isExist = getFileSystem(hadoopPath).exists(hadoopPath);
-        elapse("exists", sw);
+        elapse("exists", path, sw);
         return isExist;
     }
 
@@ -181,7 +181,7 @@ public class HadoopFileIO implements FileIO {
         StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
         boolean isDelete = getFileSystem(hadoopPath).delete(hadoopPath, recursive);
-        elapse("delete", sw);
+        elapse("delete", path, sw);
         return isDelete;
     }
 
@@ -190,7 +190,7 @@ public class HadoopFileIO implements FileIO {
         StopWatch sw = getStopWatchAndStart();
         org.apache.hadoop.fs.Path hadoopPath = path(path);
         boolean isMkdir = getFileSystem(hadoopPath).mkdirs(hadoopPath);
-        elapse("mkdir", sw);
+        elapse("mkdir", path, sw);
         return isMkdir;
     }
 
@@ -200,7 +200,7 @@ public class HadoopFileIO implements FileIO {
         org.apache.hadoop.fs.Path hadoopSrc = path(src);
         org.apache.hadoop.fs.Path hadoopDst = path(dst);
         boolean isRename = getFileSystem(hadoopSrc).rename(hadoopSrc, hadoopDst);
-        elapse("rename", sw);
+        elapse("rename", src, sw);
         return isRename;
     }
 

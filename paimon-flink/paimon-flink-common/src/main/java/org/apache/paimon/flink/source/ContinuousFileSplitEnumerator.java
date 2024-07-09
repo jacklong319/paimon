@@ -197,6 +197,7 @@ public class ContinuousFileSplitEnumerator
         }
         TableScan.Plan plan = scan.plan();
         Long nextSnapshotId = scan.checkpoint();
+        LOG.info("下一个snapshotId: {}", nextSnapshotId);
         return Optional.of(new PlanWithNextSnapshotId(plan, nextSnapshotId));
     }
 

@@ -27,6 +27,8 @@ import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
 import org.apache.flink.connector.file.src.reader.BulkFormat.RecordIterator;
 import org.apache.flink.connector.file.src.util.RecordAndPosition;
 import org.apache.flink.table.data.RowData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
@@ -38,6 +40,7 @@ import java.util.Set;
  * will be no checkpoint segmentation in iterator consumption.
  */
 public class FlinkRecordsWithSplitIds implements RecordsWithSplitIds<RecordIterator<RowData>> {
+    private static final Logger LOG = LoggerFactory.getLogger(FlinkRecordsWithSplitIds.class);
 
     @Nullable private String splitId;
 
@@ -115,7 +118,9 @@ public class FlinkRecordsWithSplitIds implements RecordsWithSplitIds<RecordItera
 
         RecordAndPosition<RowData> record;
         while ((record = element.next()) != null) {
-            output.collect(record.getRecord(), timestamp);
+            RowData row = record.getRecord();
+            LOG.info("emit record: {}", row.toString());
+            output.collect(row, timestamp);
             state.setPosition(record);
         }
     }
