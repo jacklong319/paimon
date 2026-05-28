@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * A {@link GlobalIndexReader} that combines results from multiple readers by performing a union
@@ -114,15 +115,11 @@ public class UnionGlobalIndexReader implements GlobalIndexReader {
     }
 
     @Override
-    public Optional<GlobalIndexResult> visitVectorSearch(VectorSearch vectorSearch) {
-        return union(reader -> reader.visitVectorSearch(vectorSearch));
-    }
-
-    private Optional<GlobalIndexResult> union(
-            Function<GlobalIndexReader, Optional<GlobalIndexResult>> visitor) {
-        Optional<GlobalIndexResult> result = Optional.empty();
-        for (GlobalIndexReader reader : readers) {
-            Optional<GlobalIndexResult> current = visitor.apply(reader);
+    public Optional<ScoredGlobalIndexResult> visitVectorSearch(VectorSearch vectorSearch) {
+        Optional<ScoredGlobalIndexResult> result = Optional.empty();
+        List<Optional<ScoredGlobalIndexResult>> results =
+                executeAllReaders(reader -> reader.visitVectorSearch(vectorSearch));
+        for (Optional<ScoredGlobalIndexResult> current : results) {
             if (!current.isPresent()) {
                 continue;
             }
@@ -132,6 +129,26 @@ public class UnionGlobalIndexReader implements GlobalIndexReader {
             result = Optional.of(result.get().or(current.get()));
         }
         return result;
+    }
+
+    private Optional<GlobalIndexResult> union(
+            Function<GlobalIndexReader, Optional<GlobalIndexResult>> visitor) {
+        Optional<GlobalIndexResult> result = Optional.empty();
+        List<Optional<GlobalIndexResult>> results = executeAllReaders(visitor);
+        for (Optional<GlobalIndexResult> current : results) {
+            if (!current.isPresent()) {
+                continue;
+            }
+            if (!result.isPresent()) {
+                result = current;
+            }
+            result = Optional.of(result.get().or(current.get()));
+        }
+        return result;
+    }
+
+    private <R> List<R> executeAllReaders(Function<GlobalIndexReader, R> function) {
+        return readers.stream().map(function).collect(Collectors.toList());
     }
 
     @Override

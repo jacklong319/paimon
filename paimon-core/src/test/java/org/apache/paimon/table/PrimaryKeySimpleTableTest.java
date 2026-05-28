@@ -82,8 +82,6 @@ import org.apache.paimon.utils.ChangelogManager;
 import org.apache.paimon.utils.Pair;
 import org.apache.paimon.utils.RoaringBitmap32;
 
-import org.apache.paimon.shade.org.apache.parquet.hadoop.ParquetOutputFormat;
-
 import org.apache.commons.math3.random.RandomDataGenerator;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -144,6 +142,7 @@ import static org.apache.paimon.predicate.SortValue.NullOrdering.NULLS_LAST;
 import static org.apache.paimon.predicate.SortValue.SortDirection.ASCENDING;
 import static org.apache.paimon.predicate.SortValue.SortDirection.DESCENDING;
 import static org.apache.paimon.table.SpecialFields.KEY_FIELD_PREFIX;
+import static org.apache.paimon.testutils.assertj.PaimonAssertions.anyCauseMatches;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -1138,9 +1137,9 @@ public class PrimaryKeySimpleTableTest extends SimpleTableTestBase {
                             conf.set(BUCKET, 1);
                             conf.set(FILE_FORMAT, FILE_FORMAT_PARQUET);
                             conf.set(DELETION_VECTORS_ENABLED, true);
-                            conf.set(ParquetOutputFormat.BLOCK_SIZE, "524288");
-                            conf.set(ParquetOutputFormat.MIN_ROW_COUNT_FOR_PAGE_SIZE_CHECK, "100");
-                            conf.set(ParquetOutputFormat.PAGE_ROW_COUNT_LIMIT, "300");
+                            conf.set("parquet.block.size", "524288");
+                            conf.set("parquet.page.size.row.check.min", "100");
+                            conf.set("parquet.page.row.count.limit", "300");
                             conf.set("file-index.bitmap.columns", "b");
                         });
 
@@ -1247,9 +1246,9 @@ public class PrimaryKeySimpleTableTest extends SimpleTableTestBase {
                             conf.set(BUCKET, 1);
                             conf.set(FILE_FORMAT, FILE_FORMAT_PARQUET);
                             conf.set(DELETION_VECTORS_ENABLED, true);
-                            conf.set(ParquetOutputFormat.BLOCK_SIZE, "524288");
-                            conf.set(ParquetOutputFormat.MIN_ROW_COUNT_FOR_PAGE_SIZE_CHECK, "100");
-                            conf.set(ParquetOutputFormat.PAGE_ROW_COUNT_LIMIT, "300");
+                            conf.set("parquet.block.size", "524288");
+                            conf.set("parquet.page.size.row.check.min", "100");
+                            conf.set("parquet.page.row.count.limit", "300");
                             conf.set("file-index.range-bitmap.columns", indexColumnName);
                         });
 
@@ -1334,9 +1333,9 @@ public class PrimaryKeySimpleTableTest extends SimpleTableTestBase {
                             conf.set(FILE_FORMAT, FILE_FORMAT_PARQUET);
                             conf.set(DELETION_VECTORS_ENABLED, true);
                             conf.set(SOURCE_SPLIT_TARGET_SIZE, MemorySize.ofBytes(1));
-                            conf.set(ParquetOutputFormat.BLOCK_SIZE, "524288");
-                            conf.set(ParquetOutputFormat.MIN_ROW_COUNT_FOR_PAGE_SIZE_CHECK, "100");
-                            conf.set(ParquetOutputFormat.PAGE_ROW_COUNT_LIMIT, "300");
+                            conf.set("parquet.block.size", "524288");
+                            conf.set("parquet.page.size.row.check.min", "100");
+                            conf.set("parquet.page.row.count.limit", "300");
                         });
 
         int rowCount = 10000;
@@ -2473,6 +2472,33 @@ public class PrimaryKeySimpleTableTest extends SimpleTableTestBase {
                                 "1|10|100|binary|varbinary|mapKey:mapVal|multiset"));
     }
 
+    @Test
+    public void testEqualsAndHashCode() throws Exception {
+        // Test same table equals and hashCode consistency
+        FileStoreTable table1 = createFileStoreTable();
+        FileStoreTable table2 = table1.copy(table1.schema());
+        assertThat(table1.equals(table2)).isTrue();
+        assertThat(table1.hashCode()).isEqualTo(table2.hashCode());
+
+        // Test with different options
+        Map<String, String> optionsWithMock = new HashMap<>(table1.schema().options());
+        optionsWithMock.put("mockKey", "mockValue");
+        TableSchema schemaWithMock = table1.schema().copy(optionsWithMock);
+        FileStoreTable tableWithMock = table1.copy(schemaWithMock);
+
+        assertThat(table1.equals(tableWithMock)).isFalse();
+        assertThat(table1.hashCode()).isNotEqualTo(tableWithMock.hashCode());
+
+        // Test same options should be equal
+        Map<String, String> sameOptionsWithMock = new HashMap<>(table1.schema().options());
+        sameOptionsWithMock.put("mockKey", "mockValue");
+        TableSchema sameSchemaWithMock = table1.schema().copy(sameOptionsWithMock);
+        FileStoreTable sameTableWithMock = table1.copy(sameSchemaWithMock);
+
+        assertThat(tableWithMock.equals(sameTableWithMock)).isTrue();
+        assertThat(tableWithMock.hashCode()).isEqualTo(sameTableWithMock.hashCode());
+    }
+
     private void assertReadChangelog(int id, FileStoreTable table) throws Exception {
         // read the changelog at #{id}
         table = table.copy(singletonMap(CoreOptions.SCAN_SNAPSHOT_ID.key(), String.valueOf(id)));
@@ -2644,5 +2670,22 @@ public class PrimaryKeySimpleTableTest extends SimpleTableTestBase {
                                 options.toMap(),
                                 ""));
         return new PrimaryKeyFileStoreTable(FileIOFinder.find(tablePath), tablePath, tableSchema);
+    }
+
+    @Test
+    public void testMergeBranchPrimaryKeyTable() throws Exception {
+        FileStoreTable table = createFileStoreTable();
+
+        try (StreamTableWrite write = table.newWrite(commitUser);
+                StreamTableCommit commit = table.newCommit(commitUser)) {
+            write.write(rowData(0, 0, 0L));
+            commit.commit(0, write.prepareCommit(false, 1));
+        }
+
+        table.createTag("tag1", 1);
+        table.createBranch(BRANCH_NAME, "tag1");
+
+        assertThatThrownBy(() -> table.mergeBranch(BRANCH_NAME, "main"))
+                .satisfies(anyCauseMatches(IllegalArgumentException.class, "append-only tables"));
     }
 }

@@ -1,19 +1,19 @@
-#  Licensed to the Apache Software Foundation (ASF) under one
-#  or more contributor license agreements.  See the NOTICE file
-#  distributed with this work for additional information
-#  regarding copyright ownership.  The ASF licenses this file
-#  to you under the Apache License, Version 2.0 (the
-#  "License"); you may not use this file except in compliance
-#  with the License.  You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#  Unless required by applicable law or agreed to in writing,
-#  software distributed under the License is distributed on an
-#  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-#  KIND, either express or implied.  See the License for the
-#  specific language governing permissions and limitations
-#  under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
 import logging
 import os
@@ -83,22 +83,21 @@ class FileSystemBranchManager(BranchManager):
 
     def _copy_with_branch(self, manager, branch: str):
         """
-        Create a copy of the manager for a different branch.
+        Return a new manager whose path accessors land under
+        ``{table_path}/branch/branch-{name}``.
 
-        Args:
-            manager: The manager to copy (TagManager, SnapshotManager, etc.)
-            branch: The target branch name
-
-        Returns:
-            A new manager instance for the specified branch
+        Equivalent to the per-manager rebranch calls inlined in Java
+        ``FileSystemBranchManager.createBranch(name, tagName)`` (e.g.
+        ``snapshotManager.copyWithBranch(branchName)``). ``TagManager``
+        is rebuilt directly because the Python ``TagManager`` has no
+        ``copy_with_branch`` factory yet.
         """
         if isinstance(manager, TagManager):
             return TagManager(self.file_io, self.table_path, branch)
         elif isinstance(manager, SchemaManager):
-            # SchemaManager doesn't support branch parameter, use branch path instead
-            return SchemaManager(self.file_io, self.branch_path(branch))
+            return manager.copy_with_branch(branch)
         elif isinstance(manager, SnapshotManager):
-            return SnapshotManager(self.snapshot_manager.table)
+            return manager.copy_with_branch(branch)
         else:
             return manager
 
@@ -198,6 +197,60 @@ class FileSystemBranchManager(BranchManager):
                 f"{self.branch_path(branch_name)}. Please try again."
             )
             raise RuntimeError(f"Failed to delete branch '{branch_name}'") from e
+
+    def rename_branch(self, from_branch: str, to_branch: str) -> None:
+        """
+        Rename a branch.
+
+        Args:
+            from_branch: Current name of the branch
+            to_branch: New name for the branch
+
+        Raises:
+            ValueError: If from_branch or to_branch is blank, from_branch doesn't exist,
+                       to_branch already exists, or trying to rename the main branch
+            RuntimeError: If the rename operation fails
+        """
+        # Check if from_branch is main branch
+        if self.is_main_branch(from_branch):
+            raise ValueError(f"Cannot rename the main branch '{from_branch}'.")
+
+        # Check if from_branch is blank
+        if not from_branch or from_branch.isspace():
+            raise ValueError("Source branch name shouldn't be blank.")
+
+        # Check if to_branch is blank
+        if not to_branch or to_branch.isspace():
+            raise ValueError("Target branch name shouldn't be blank.")
+
+        # Validate the new branch name
+        try:
+            self.validate_branch(to_branch)
+        except ValueError as e:
+            raise ValueError(f"Invalid target branch name: {e}")
+
+        # Check if from_branch exists
+        if not self.branch_exists(from_branch):
+            raise ValueError(f"Source branch '{from_branch}' doesn't exist.")
+
+        # Check if to_branch already exists
+        if self.branch_exists(to_branch):
+            raise ValueError(f"Target branch '{to_branch}' already exists.")
+
+        try:
+            # Rename the branch directory
+            from_path = self.branch_path(from_branch)
+            to_path = self.branch_path(to_branch)
+            self.file_io.rename(from_path, to_path)
+            logger.info(f"Successfully renamed branch from '{from_branch}' to '{to_branch}'")
+        except Exception as e:
+            logger.warning(
+                f"Renaming branch from '{from_branch}' to '{to_branch}' failed due to an exception. "
+                f"Please try again."
+            )
+            raise RuntimeError(
+                f"Failed to rename branch from '{from_branch}' to '{to_branch}'"
+            ) from e
 
     def fast_forward(self, branch_name: str) -> None:
         """

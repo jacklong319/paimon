@@ -1,35 +1,36 @@
-################################################################################
-#  Licensed to the Apache Software Foundation (ASF) under one
-#  or more contributor license agreements.  See the NOTICE file
-#  distributed with this work for additional information
-#  regarding copyright ownership.  The ASF licenses this file
-#  to you under the Apache License, Version 2.0 (the
-#  "License"); you may not use this file except in compliance
-#  with the License.  You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-# limitations under the License.
-################################################################################
-from typing import Optional, List
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
-from pypaimon.common.identifier import DEFAULT_MAIN_BRANCH
-from pypaimon.catalog.catalog_exception import ColumnAlreadyExistException, ColumnNotExistException
+from typing import List, Optional
+
+from pypaimon.catalog.catalog_exception import (ColumnAlreadyExistException,
+                                                ColumnNotExistException)
 from pypaimon.common.file_io import FileIO
+from pypaimon.common.identifier import DEFAULT_MAIN_BRANCH
 from pypaimon.common.json_util import JSON
-from pypaimon.common.options import Options, CoreOptions
+from pypaimon.common.options import CoreOptions, Options
 from pypaimon.schema.data_types import AtomicInteger, DataField
 from pypaimon.schema.schema import Schema
-from pypaimon.schema.schema_change import (
-    AddColumn, DropColumn, RemoveOption, RenameColumn,
-    SchemaChange, SetOption, UpdateColumnComment,
-    UpdateColumnNullability, UpdateColumnPosition,
-    UpdateColumnType, UpdateComment
-)
+from pypaimon.schema.schema_change import (AddColumn, DropColumn, RemoveOption,
+                                           RenameColumn, SchemaChange,
+                                           SetOption, UpdateColumnComment,
+                                           UpdateColumnNullability,
+                                           UpdateColumnPosition,
+                                           UpdateColumnType, UpdateComment)
 from pypaimon.schema.table_schema import TableSchema
 
 
@@ -134,6 +135,60 @@ def _assert_not_updating_primary_keys(
     field_name = field_names[0]
     if field_name in schema.primary_keys:
         raise ValueError(f"Cannot {operation} primary key")
+
+
+def _assert_not_renaming_blob_column(
+        new_fields: List[DataField], field_names: List[str]):
+    if len(field_names) > 1:
+        return
+    field_name = field_names[0]
+    for field in new_fields:
+        if field.name == field_name and str(field.type) == 'BLOB':
+            raise ValueError(
+                f"Cannot rename BLOB column: [{field_name}]"
+            )
+
+
+def _validate_blob_external_storage_fields(fields: List[DataField], options: dict):
+    """Validate blob-external-storage-field configuration.
+
+    Validation order aligned with Java's SchemaValidation.validateBlobExternalStorageFields():
+    1. Field must be a BLOB type in the schema
+    2. Field must be in blob-descriptor-field
+    3. blob-external-storage-path must be configured
+    """
+    core_options = CoreOptions(Options(options))
+    external_fields = core_options.blob_external_storage_fields()
+    if not external_fields:
+        return
+
+    # 1. Configured fields must be BLOB type
+    field_type_map = {f.name: f.type for f in fields}
+    for field_name in external_fields:
+        field_type = field_type_map.get(field_name)
+        if field_type is None or getattr(field_type, 'type', None) != 'BLOB':
+            raise ValueError(
+                f"Field '{field_name}' in "
+                f"'{CoreOptions.BLOB_EXTERNAL_STORAGE_FIELD.key()}' must be a BLOB type field."
+            )
+
+    # 2. Must be a subset of blob-descriptor-field
+    descriptor_fields = core_options.blob_descriptor_fields()
+    not_in_descriptor = external_fields - descriptor_fields
+    if not_in_descriptor:
+        raise ValueError(
+            f"Fields {sorted(not_in_descriptor)} in "
+            f"'{CoreOptions.BLOB_EXTERNAL_STORAGE_FIELD.key()}' must also be configured in "
+            f"'{CoreOptions.BLOB_DESCRIPTOR_FIELD.key()}'."
+        )
+
+    # 3. Must configure external-storage-path
+    external_path = core_options.blob_external_storage_path()
+    if not external_path:
+        raise ValueError(
+            f"'{CoreOptions.BLOB_EXTERNAL_STORAGE_FIELD.key()}' is configured but "
+            f"'{CoreOptions.BLOB_EXTERNAL_STORAGE_PATH.key()}' is not set."
+        )
 
 
 def _handle_rename_column(change: RenameColumn, new_fields: List[DataField]):
@@ -247,12 +302,27 @@ class SchemaManager:
         except Exception as e:
             raise RuntimeError(f"Failed to load schema from path: {self.schema_path}") from e
 
+    def list_all(self) -> List['TableSchema']:
+        """Return every committed schema in ascending ID order.
+
+        Missing IDs (deleted on disk after expiry, for instance) are
+        skipped.
+        """
+        ids = sorted(self._list_versioned_files())
+        schemas: List['TableSchema'] = []
+        for schema_id in ids:
+            schema = self.get_schema(schema_id)
+            if schema is not None:
+                schemas.append(schema)
+        return schemas
+
     def create_table(self, schema: Schema) -> TableSchema:
         while True:
             latest = self.latest()
             if latest is not None:
                 raise RuntimeError("Schema in filesystem exists, creation is not allowed.")
 
+            _validate_blob_external_storage_fields(schema.fields, schema.options)
             table_schema = TableSchema.from_schema(schema_id=0, schema=schema)
             success = self.commit(table_schema)
             if success:
@@ -355,6 +425,7 @@ class SchemaManager:
                 _assert_not_updating_partition_keys(
                     old_table_schema, change.field_names, "rename"
                 )
+                _assert_not_renaming_blob_column(new_fields, change.field_names)
                 _handle_rename_column(change, new_fields)
             elif isinstance(change, DropColumn):
                 _drop_column_validation(old_table_schema, change)

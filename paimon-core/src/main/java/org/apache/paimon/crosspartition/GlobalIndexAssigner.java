@@ -132,7 +132,7 @@ public class GlobalIndexAssigner implements Serializable, Closeable {
         this.extractor = new RowPartitionAllPrimaryKeyExtractor(table.schema());
         this.keyPartExtractor = new KeyPartPartitionKeyExtractor(table.schema());
 
-        String tmpDir = ioManager.pickRandomTempDir();
+        String tmpDir = ioManager.pickTempDir();
         this.path = new File(tmpDir, "rocksdb-" + UUID.randomUUID());
         if (!this.path.mkdirs()) {
             throw new RuntimeException(
@@ -307,8 +307,7 @@ public class GlobalIndexAssigner implements Serializable, Closeable {
                         coreOptions.pageSize(),
                         coreOptions.localSortMaxNumFileHandles(),
                         coreOptions.spillCompressOptions(),
-                        coreOptions.writeBufferSpillDiskSize(),
-                        coreOptions.sequenceFieldSortOrderIsAscending());
+                        coreOptions.writeBufferSpillDiskSize());
 
         Function<SortOrder, RowIterator> iteratorFunction =
                 sortOrder -> {

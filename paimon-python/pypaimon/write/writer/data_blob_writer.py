@@ -1,30 +1,28 @@
-################################################################################
-#  Licensed to the Apache Software Foundation (ASF) under one
-#  or more contributor license agreements.  See the NOTICE file
-#  distributed with this work for additional information
-#  regarding copyright ownership.  The ASF licenses this file
-#  to you under the Apache License, Version 2.0 (the
-#  "License"); you may not use this file except in compliance
-#  with the License.  You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-# limitations under the License.
-################################################################################
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
 import logging
 import uuid
 from typing import Dict, List, Optional, Tuple
 
-
 import pyarrow as pa
 
-from pypaimon.data.timestamp import Timestamp
 from pypaimon.common.options.core_options import CoreOptions
+from pypaimon.data.timestamp import Timestamp
 from pypaimon.manifest.schema.data_file_meta import DataFileMeta
 from pypaimon.manifest.schema.simple_stats import SimpleStats
 from pypaimon.table.row.generic_row import GenericRow
@@ -49,6 +47,8 @@ class DataBlobWriter(DataWriter):
     - One normal data file may correspond to multiple blob data files
     - Blob data is written immediately to disk to prevent memory corruption
     - Blob file metadata is stored as separate DataFileMeta objects after normal file metadata
+    - When TableWrite.with_write_type narrows columns, incoming batches only carry that subset;
+      column lists are narrowed accordingly so splitting never selects missing columns.
 
     Rolling behavior:
     - Normal data rolls: Both normal and blob writers are closed together, blob metadata added after normal metadata
@@ -77,8 +77,9 @@ class DataBlobWriter(DataWriter):
     # Constant for checking rolling condition periodically
     CHECK_ROLLING_RECORD_CNT = 1000
 
-    def __init__(self, table, partition: Tuple, bucket: int, max_seq_number: int, options: CoreOptions = None):
-        super().__init__(table, partition, bucket, max_seq_number, options)
+    def __init__(self, table, partition: Tuple, bucket: int, max_seq_number: int, options: CoreOptions = None,
+                 write_cols: Optional[List[str]] = None):
+        super().__init__(table, partition, bucket, max_seq_number, options, write_cols=write_cols)
 
         # Determine blob columns from table schema
         self.blob_column_names = self._get_blob_columns_from_schema()
@@ -94,16 +95,31 @@ class DataBlobWriter(DataWriter):
             )
 
         # Blob fields that should still be written to `.blob` files.
-        self.blob_file_column_names = [
+        full_blob_file_column_names = [
             col for col in self.blob_column_names if col not in self.blob_descriptor_fields
         ]
-
+        full_blob_file_set = set(full_blob_file_column_names)
         all_column_names = self.table.field_names
-        self.normal_column_names = [
-            col for col in all_column_names if col not in self.blob_file_column_names
-        ]
+
+        # Narrow columns when TableWrite.with_write_type(...) supplies a partial column list.
+        # Incoming RecordBatches only contain those columns; selecting full normal/blob lists
+        # would raise KeyError.
+        if write_cols is not None:
+            write_col_set = set(write_cols)
+            self.blob_file_column_names = [
+                col for col in full_blob_file_column_names if col in write_col_set
+            ]
+            self.normal_column_names = [
+                col for col in write_cols if col not in full_blob_file_set
+            ]
+        else:
+            self.blob_file_column_names = list(full_blob_file_column_names)
+            self.normal_column_names = [
+                col for col in all_column_names if col not in full_blob_file_set
+            ]
+        normal_name_set = set(self.normal_column_names)
         self.normal_columns = [
-            field for field in self.table.table_schema.fields if field.name in self.normal_column_names
+            field for field in self.table.table_schema.fields if field.name in normal_name_set
         ]
         self.write_cols = self.normal_column_names
 
@@ -127,12 +143,28 @@ class DataBlobWriter(DataWriter):
                 options=options
             )
 
+        # Initialize ExternalStorageBlobWriter if configured
+        self._external_storage_writer = None
+        external_storage_fields = self.options.blob_external_storage_fields()
+        external_storage_path = self.options.blob_external_storage_path()
+        if external_storage_fields and external_storage_path:
+            from pypaimon.write.writer.external_storage_blob_writer import \
+                ExternalStorageBlobWriter
+            self._external_storage_writer = ExternalStorageBlobWriter(
+                file_io=self.file_io,
+                external_storage_path=external_storage_path,
+                external_storage_fields=external_storage_fields,
+                blob_target_file_size=self.options.blob_target_file_size(),
+                data_file_prefix=CoreOptions.data_file_prefix(self.options),
+            )
+
         logger.info(
             "Initialized DataBlobWriter with blob columns: %s, blob file columns: %s, descriptor "
-            "stored columns: %s",
+            "stored columns: %s, external storage fields: %s",
             self.blob_column_names,
             self.blob_file_column_names,
             sorted(self.blob_descriptor_fields),
+            sorted(external_storage_fields) if external_storage_fields else [],
         )
 
     def _get_blob_columns_from_schema(self) -> List[str]:
@@ -155,6 +187,11 @@ class DataBlobWriter(DataWriter):
 
     def write(self, data: pa.RecordBatch):
         try:
+            # Transform external-storage fields: write raw blob to external storage,
+            # replace with serialized BlobDescriptor
+            if self._external_storage_writer:
+                data = self._external_storage_writer.transform_batch(data)
+
             # Split data into normal and blob parts
             normal_data, blob_data_map = self._split_data(data)
             self._validate_descriptor_stored_fields_input(data)
@@ -196,6 +233,8 @@ class DataBlobWriter(DataWriter):
         try:
             if self.pending_normal_data is not None and self.pending_normal_data.num_rows > 0:
                 self._close_current_writers()
+            if self._external_storage_writer:
+                self._external_storage_writer.close()
         except Exception as e:
             logger.error("Exception occurs when closing writer. Cleaning up.", exc_info=e)
             self.abort()
@@ -207,6 +246,8 @@ class DataBlobWriter(DataWriter):
         """Abort all writers and clean up resources."""
         for blob_writer in self.blob_writers.values():
             blob_writer.abort()
+        if self._external_storage_writer:
+            self._external_storage_writer.abort()
         self.pending_normal_data = None
         self.committed_files.clear()
 
@@ -316,6 +357,8 @@ class DataBlobWriter(DataWriter):
             self.file_io.write_avro(file_path, data, compression=self.compression, zstd_level=self.zstd_level)
         elif self.file_format == CoreOptions.FILE_FORMAT_LANCE:
             self.file_io.write_lance(file_path, data)
+        elif self.file_format == CoreOptions.FILE_FORMAT_VORTEX:
+            self.file_io.write_vortex(file_path, data)
         else:
             raise ValueError(f"Unsupported file format: {self.file_format}")
 

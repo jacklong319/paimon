@@ -22,12 +22,14 @@ import org.apache.paimon.fs.SeekableInputStream;
 import org.apache.paimon.globalindex.GlobalIndexIOMeta;
 import org.apache.paimon.globalindex.GlobalIndexReader;
 import org.apache.paimon.globalindex.GlobalIndexResult;
+import org.apache.paimon.globalindex.ScoredGlobalIndexResult;
 import org.apache.paimon.globalindex.io.GlobalIndexFileReader;
 import org.apache.paimon.predicate.FieldRef;
 import org.apache.paimon.predicate.VectorSearch;
 import org.apache.paimon.types.ArrayType;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.FloatType;
+import org.apache.paimon.types.VectorType;
 import org.apache.paimon.utils.IOUtils;
 import org.apache.paimon.utils.RoaringNavigableMap64;
 
@@ -82,7 +84,7 @@ public class LuminaVectorGlobalIndexReader implements GlobalIndexReader {
     }
 
     @Override
-    public Optional<GlobalIndexResult> visitVectorSearch(VectorSearch vectorSearch) {
+    public Optional<ScoredGlobalIndexResult> visitVectorSearch(VectorSearch vectorSearch) {
         try {
             ensureLoaded();
             return Optional.ofNullable(search(vectorSearch));
@@ -95,9 +97,9 @@ public class LuminaVectorGlobalIndexReader implements GlobalIndexReader {
         }
     }
 
-    private GlobalIndexResult search(VectorSearch vectorSearch) throws IOException {
+    private ScoredGlobalIndexResult search(VectorSearch vectorSearch) throws IOException {
         validateSearchVector(vectorSearch.vector());
-        float[] queryVector = ((float[]) vectorSearch.vector()).clone();
+        float[] queryVector = vectorSearch.vector().clone();
         int limit = vectorSearch.limit();
         LuminaVectorMetric indexMetric = indexMeta.metric();
 
@@ -203,10 +205,16 @@ public class LuminaVectorGlobalIndexReader implements GlobalIndexReader {
             throw new IllegalArgumentException(
                     "Expected float[] vector but got: " + vector.getClass());
         }
-        if (!(fieldType instanceof ArrayType)
-                || !(((ArrayType) fieldType).getElementType() instanceof FloatType)) {
+        boolean validFieldType = false;
+        if (fieldType instanceof VectorType) {
+            validFieldType = ((VectorType) fieldType).getElementType() instanceof FloatType;
+        } else if (fieldType instanceof ArrayType) {
+            validFieldType = ((ArrayType) fieldType).getElementType() instanceof FloatType;
+        }
+        if (!validFieldType) {
             throw new IllegalArgumentException(
-                    "Lumina currently only supports float arrays, but field type is: " + fieldType);
+                    "Lumina requires VectorType<FLOAT> or ArrayType<FLOAT>, but field type is: "
+                            + fieldType);
         }
         int queryDim = ((float[]) vector).length;
         if (queryDim != indexMeta.dim()) {

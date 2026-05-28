@@ -1,20 +1,20 @@
-"""
-Licensed to the Apache Software Foundation (ASF) under one
-or more contributor license agreements.  See the NOTICE file
-distributed with this work for additional information
-regarding copyright ownership.  The ASF licenses this file
-to you under the Apache License, Version 2.0 (the
-"License"); you may not use this file except in compliance
-with the License.  You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-"""
 import glob
 import logging
 import os
@@ -338,6 +338,29 @@ class RESTBaseTest(unittest.TestCase):
             identifier, partition_name_pattern="dt=p%"
         )
         self.assertEqual(len(result.elements), 3)
+
+    def test_alter_database(self):
+        """Test alter_database sets and removes properties."""
+        from pypaimon.catalog.rest.property_change import PropertyChange
+        db_name = "alter_db_test"
+        self.rest_catalog.create_database(db_name, True)
+
+        # set property
+        self.rest_catalog.alter_database(
+            db_name,
+            [PropertyChange.set_property("key1", "value1"),
+             PropertyChange.set_property("key2", "value2")])
+        db = self.rest_catalog.get_database(db_name)
+        self.assertEqual(db.options.get("key1"), "value1")
+        self.assertEqual(db.options.get("key2"), "value2")
+
+        # remove property
+        self.rest_catalog.alter_database(
+            db_name,
+            [PropertyChange.remove_property("key1")])
+        db = self.rest_catalog.get_database(db_name)
+        self.assertNotIn("key1", db.options)
+        self.assertEqual(db.options.get("key2"), "value2")
 
     def test_list_partitions_paged_empty(self):
         """Test list_partitions_paged returns empty when no partitions."""
